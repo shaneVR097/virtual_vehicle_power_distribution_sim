@@ -1,3 +1,4 @@
+
 export enum CarType {
     Sedan = 'Sedan',
     SUV = 'SUV',
@@ -6,6 +7,9 @@ export enum CarType {
     Coupe = 'Coupe',
     Convertible = 'Convertible',
     Minivan = 'Minivan',
+    Bus = 'Bus',
+    Truck = 'Truck',
+    Special = 'Special',
 }
 
 export const CAR_SUBTYPES: Record<CarType, string[]> = {
@@ -16,6 +20,9 @@ export const CAR_SUBTYPES: Record<CarType, string[]> = {
     [CarType.Coupe]: ['Sports', 'Grand Tourer'],
     [CarType.Convertible]: ['Roadster', '4-Seater'],
     [CarType.Minivan]: ['Standard', 'Extended Wheelbase'],
+    [CarType.Bus]: ['City', 'Long-Distance', 'Electric'],
+    [CarType.Truck]: ['Light', 'Heavy', 'Semi', 'Electric'],
+    [CarType.Special]: ['Emergency', 'Construction', 'Agricultural'],
 };
 
 
@@ -39,6 +46,16 @@ export interface VehicleConfig {
     subType: string;
     powertrain: Powertrain;
     voltageSystem: VoltageSystem;
+}
+
+// FIX: Moved BatteryParameters interface here from constants.ts
+export interface BatteryParameters {
+    capacityWh: number;
+    nominalVoltage: number;
+    internalResistanceOhms: number;
+    // For thermal model
+    massKg: number;
+    specificHeatCapacity: number; // J/(kg*C)
 }
 
 export enum TimeOfDay {
@@ -118,23 +135,29 @@ export interface CarState {
     lightsOn: boolean;
     wipersOn: boolean;
     seatHeatersOn: boolean;
+    isIgnitionCycle: boolean;
 }
 
 export interface SystemMetrics {
-    batteryCharge: number; // Percentage
+    batteryCharge: number; // Percentage (SoC)
+    batterySoh: number; // Percentage (State of Health)
+    batteryVoltage: number; // Volts
+    batteryCurrent: number; // Amperes
     systemTemp: number; // Celsius
     totalPowerDraw: number; // Watts
     availablePower: number; // Watts
 }
 
 export type SubSystemName =
-  | 'ecu' | 'fuelPump' | 'radiatorFan' | 'starterMotor'
+  | 'ecu' | 'fuelPump' | 'radiatorFan' | 'starterMotor' | 'tractionMotor'
   | 'absModule' | 'powerSteering' | 'airbags'
   | 'headlights' | 'tailLights' | 'brakeLights' | 'fogLights' | 'daytimeRunningLights'
   | 'hvacBlower' | 'hvacCompressor'
   | 'infotainment' | 'audioSystem'
   | 'domeLight' | 'instrumentCluster'
-  | 'windowMotors' | 'seatHeaters' | 'wipers' | 'speakers';
+  | 'windowMotors' | 'seatHeaters' | 'wipers' | 'speakers'
+  // New subsystems for expanded vehicle types
+  | 'airBrakeCompressor' | 'siren' | 'strobeLights';
 
 export type PowerDistribution = Record<SubSystemName, number>;
 
@@ -158,7 +181,7 @@ export interface HistoryEntry {
 export interface SubSystemConfig {
     id: SubSystemName;
     name: string;
-    category: 'Powertrain' | 'Chassis' | 'Lighting' | 'Climate' | 'Interior' | 'Infotainment';
+    category: 'Powertrain' | 'Chassis' | 'Lighting' | 'Climate' | 'Interior' | 'Infotainment' | 'Special';
     priority: number;
     basePower: number;
     maxPower: number;

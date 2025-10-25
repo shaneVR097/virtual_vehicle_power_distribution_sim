@@ -14,7 +14,7 @@ const BatteryHistoryChart: React.FC<ChartProps> = ({ data, events }) => {
     }));
 
   return (
-    <div className="glass-pane p-4 h-64 w-full">
+    <div className="glass-pane p-4 h-48 w-full">
       <h3 className="text-md font-semibold text-text-primary mb-4">Battery Charge (%)</h3>
       <ResponsiveContainer>
         <AreaChart data={formattedData} margin={{ top: 5, right: 20, left: -10, bottom: 5 }}>

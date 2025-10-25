@@ -7,7 +7,9 @@ import {
     ZapIcon, SnowflakeIcon, LightbulbIcon, RadioIcon, AlertTriangleIcon, 
     ThermometerIcon, CpuIcon, FanIcon, SpeakerIcon,
     WindshieldWiperIcon, SeatHeaterIcon, WindowMotorIcon, ClusterIcon,
-    SunIcon, MoonIcon, SunsetIcon, CloudIcon, CloudRainIcon, BuildingIcon, HomeIcon, RoadIcon, MountainIcon, MinusIcon, TrendingUpIcon, TrendingDownIcon
+    SunIcon, MoonIcon, SunsetIcon, CloudIcon, CloudRainIcon, BuildingIcon, HomeIcon, RoadIcon, MountainIcon, MinusIcon, TrendingUpIcon, TrendingDownIcon,
+    PowerIcon, BatteryChargingIcon,
+    SirenIcon, AirBrakeIcon, MotorIcon, HealthIcon
 } from './Icons';
 
 interface CarVisualizationProps {
@@ -23,6 +25,7 @@ const subsystemIcons: Record<SubSystemName, React.ReactNode> = {
     fuelPump: <div className="font-bold text-xs">FUEL</div>,
     radiatorFan: <FanIcon className="w-5 h-5" />,
     starterMotor: <ZapIcon className="w-5 h-5" />,
+    tractionMotor: <MotorIcon className="w-6 h-6" />,
     absModule: <div className="font-bold text-xs">ABS</div>,
     powerSteering: <div className="font-bold text-xs">EPS</div>,
     airbags: <AlertTriangleIcon className="w-5 h-5" />,
@@ -41,6 +44,9 @@ const subsystemIcons: Record<SubSystemName, React.ReactNode> = {
     windowMotors: <WindowMotorIcon className="w-5 h-5" />,
     seatHeaters: <SeatHeaterIcon className="w-5 h-5" />,
     wipers: <WindshieldWiperIcon className="w-5 h-5" />,
+    airBrakeCompressor: <AirBrakeIcon className="w-5 h-5" />,
+    siren: <SirenIcon className="w-5 h-5" />,
+    strobeLights: <LightbulbIcon className="w-5 h-5 text-blue-400 animate-pulse" />,
 };
 
 const SubSystemNode: React.FC<{ subsystem: SubSystemConfig, power: number, hasAlert: boolean }> = ({ subsystem, power, hasAlert }) => {
@@ -84,7 +90,7 @@ const ActiveLoadBoard: React.FC<{ title: string, systems: SubSystemConfig[], pow
     const activeSystems = systems.filter(s => powerDistribution[s.id] > 0);
 
     return (
-        <div className="glass-pane p-2 rounded-md h-full flex flex-col">
+        <div className="glass-pane p-2 rounded-md h-full flex flex-col pointer-events-auto">
             <h4 className="text-xs font-bold text-center text-text-secondary border-b border-border-primary pb-1 mb-1 flex-none">{title}</h4>
             <div className="space-y-1 overflow-y-auto flex-grow pr-1">
                 {activeSystems.length > 0 ? activeSystems.map(s => (
@@ -180,22 +186,6 @@ const CarVisualization: React.FC<CarVisualizationProps> = ({ powerDistribution, 
             
             <ScenarioDisplay scenario={scenario} />
             
-            {/* Top Info Bar */}
-            <div className="flex-none flex items-stretch gap-4 mb-4 h-28">
-                <div className="w-48">
-                    <StatCard icon={<ZapIcon className="h-6 w-6 text-white" />} title="Available Power" value={metrics.availablePower.toFixed(0)} unit="W" colorClass="bg-yellow-500" />
-                </div>
-                <div className="w-48">
-                    <StatCard icon={<ThermometerIcon className="h-6 w-6 text-white" />} title="System Temp" value={metrics.systemTemp.toFixed(1)} unit="°C" colorClass="bg-red-500" />
-                </div>
-                <div className="flex-1 min-w-0">
-                    <ActiveLoadBoard title="Active Constant Loads" systems={constantLoads} powerDistribution={powerDistribution} />
-                </div>
-                <div className="flex-1 min-w-0">
-                    <ActiveLoadBoard title="Active Variable Loads" systems={variableLoads} powerDistribution={powerDistribution} />
-                </div>
-            </div>
-
             <div className="relative flex-grow w-full h-full">
                 {/* Car Outline Background */}
                 <svg viewBox="0 0 800 400" className="absolute inset-0 w-full h-full text-gray-700/60 opacity-75" preserveAspectRatio="xMidYMid meet">
@@ -223,6 +213,22 @@ const CarVisualization: React.FC<CarVisualizationProps> = ({ powerDistribution, 
                             />
                         );
                     })}
+                </div>
+
+                {/* Bottom Info Bar as HUD */}
+                <div className="absolute bottom-0 left-0 right-0 p-1 pointer-events-none">
+                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-1">
+                         <StatCard icon={<PowerIcon className="h-5 w-5 text-white" />} title="Total Power" value={metrics.totalPowerDraw.toFixed(0)} unit="W" colorClass="bg-sky-500" />
+                         <StatCard icon={<BatteryChargingIcon className="h-5 w-5 text-white" />} title="SoC" value={metrics.batteryCharge.toFixed(1)} unit="%" colorClass="bg-green-500" />
+                         <StatCard icon={<HealthIcon className="h-5 w-5 text-white" />} title="SoH" value={metrics.batterySoh.toFixed(2)} unit="%" colorClass="bg-pink-500" />
+                         <StatCard icon={<ZapIcon className="h-5 w-5 text-white" />} title="Voltage" value={metrics.batteryVoltage.toFixed(1)} unit="V" colorClass="bg-yellow-500" />
+                         <StatCard icon={<ZapIcon className="h-5 w-5 text-white" />} title="Current" value={metrics.batteryCurrent.toFixed(1)} unit="A" colorClass="bg-orange-500" />
+                         <StatCard icon={<ThermometerIcon className="h-5 w-5 text-white" />} title="Sys Temp" value={metrics.systemTemp.toFixed(1)} unit="°C" colorClass="bg-red-500" />
+                    </div>
+                    <div className="grid grid-cols-2 gap-1 mt-1">
+                        <div className="h-24"><ActiveLoadBoard title="Active Constant Loads" systems={constantLoads} powerDistribution={powerDistribution} /></div>
+                        <div className="h-24"><ActiveLoadBoard title="Active Variable Loads" systems={variableLoads} powerDistribution={powerDistribution} /></div>
+                    </div>
                 </div>
             </div>
         </div>

@@ -1,4 +1,6 @@
-import type { SubSystemConfig, PowerDistribution } from './types';
+
+import type { SubSystemConfig, PowerDistribution, VehicleConfig, BatteryParameters } from './types';
+import { Powertrain, VoltageSystem } from './types';
 
 export const SUBSYSTEMS: SubSystemConfig[] = [
     // Engine Bay
@@ -6,6 +8,7 @@ export const SUBSYSTEMS: SubSystemConfig[] = [
     { id: 'fuelPump', name: 'Fuel Pump', category: 'Powertrain', priority: 5, basePower: 50, maxPower: 150, isConstant: false, x: '60%', y: '80%' },
     { id: 'radiatorFan', name: 'Radiator Fan', category: 'Powertrain', priority: 4, basePower: 0, maxPower: 400, isConstant: false, x: '25%', y: '20%' },
     { id: 'starterMotor', name: 'Starter', category: 'Powertrain', priority: 5, basePower: 0, maxPower: 1500, isConstant: false, x: '35%', y: '30%' },
+    { id: 'tractionMotor', name: 'Traction Motor', category: 'Powertrain', priority: 5, basePower: 0, maxPower: 250000, isConstant: false, x: '50%', y: '75%' },
     
     // Chassis & Safety
     { id: 'absModule', name: 'ABS', category: 'Chassis', priority: 5, basePower: 15, maxPower: 200, isConstant: true, x: '20%', y: '75%' },
@@ -34,6 +37,11 @@ export const SUBSYSTEMS: SubSystemConfig[] = [
     { id: 'windowMotors', name: 'Window Motors', category: 'Interior', priority: 1, basePower: 0, maxPower: 150, isConstant: false, x: '30%', y: '70%' },
     { id: 'seatHeaters', name: 'Seat Heaters', category: 'Interior', priority: 1, basePower: 0, maxPower: 200, isConstant: false, x: '65%', y: '50%' },
     { id: 'wipers', name: 'Wipers', category: 'Interior', priority: 3, basePower: 0, maxPower: 150, isConstant: false, x: '25%', y: '45%' },
+
+    // New Subsystems
+    { id: 'airBrakeCompressor', name: 'Air Brakes', category: 'Chassis', priority: 5, basePower: 100, maxPower: 1200, isConstant: true, x: '75%', y: '80%'},
+    { id: 'siren', name: 'Siren', category: 'Special', priority: 4, basePower: 0, maxPower: 200, isConstant: false, x: '50%', y: '10%'},
+    { id: 'strobeLights', name: 'Strobes', category: 'Lighting', priority: 4, basePower: 0, maxPower: 300, isConstant: false, x: '50%', y: '90%'},
 ];
 
 export const INITIAL_POWER_DISTRIBUTION: PowerDistribution = SUBSYSTEMS.reduce((acc, system) => {
@@ -43,3 +51,24 @@ export const INITIAL_POWER_DISTRIBUTION: PowerDistribution = SUBSYSTEMS.reduce((
 
 
 export const SIMULATION_TICK_RATE_MS = 1500;
+
+// --- New Structured Battery Parameters ---
+
+const BASE_BATTERY_PARAMETERS: Record<Powertrain, BatteryParameters> = {
+    [Powertrain.ICE]: { capacityWh: 700, nominalVoltage: 12.6, internalResistanceOhms: 0.020, massKg: 15, specificHeatCapacity: 850 },
+    [Powertrain.EV]: { capacityWh: 75000, nominalVoltage: 400, internalResistanceOhms: 0.050, massKg: 450, specificHeatCapacity: 900 },
+    [Powertrain.Hybrid]: { capacityWh: 2000, nominalVoltage: 288, internalResistanceOhms: 0.040, massKg: 25, specificHeatCapacity: 900 },
+    [Powertrain.FCEV]: { capacityWh: 5000, nominalVoltage: 400, internalResistanceOhms: 0.045, massKg: 50, specificHeatCapacity: 900 },
+    [Powertrain.CNG]: { capacityWh: 700, nominalVoltage: 12.6, internalResistanceOhms: 0.022, massKg: 15, specificHeatCapacity: 850 },
+    [Powertrain.LPG]: { capacityWh: 700, nominalVoltage: 12.6, internalResistanceOhms: 0.021, massKg: 15, specificHeatCapacity: 850 },
+    [Powertrain.FlexFuel]: { capacityWh: 700, nominalVoltage: 12.6, internalResistanceOhms: 0.020, massKg: 15, specificHeatCapacity: 850 },
+};
+
+export function getBatteryParameters(config: VehicleConfig): BatteryParameters {
+    const baseParams = BASE_BATTERY_PARAMETERS[config.powertrain];
+    if ((config.powertrain === Powertrain.ICE || config.powertrain === Powertrain.Hybrid) && config.voltageSystem === VoltageSystem['48V']) {
+        return { capacityWh: 1000, nominalVoltage: 48.0, internalResistanceOhms: 0.015, massKg: 12, specificHeatCapacity: 850 };
+    }
+    // Future: Add more specific overrides for CarType/SubType here
+    return baseParams;
+}

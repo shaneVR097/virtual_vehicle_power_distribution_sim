@@ -1,7 +1,8 @@
-import type { CarState, SystemMetrics, PowerDistribution, Alert, VehicleConfig, Scenario } from '../types';
-import { CarAction, TimeOfDay, Weather, Region, DrivingStyle, TrafficDensity, RoadCondition, Terrain } from '../types';
-import { SUBSYSTEMS } from '../constants';
-import { calculatePowerDistribution } from './localPowerLogic';
+import type { CarState, SystemMetrics, PowerDistribution, Alert, VehicleConfig, Scenario, HistoryEntry, BatteryParameters } from '../types';
+import { CarAction, TimeOfDay, Weather, Region, DrivingStyle, TrafficDensity, RoadCondition, Terrain, Powertrain } from '../types';
+import { SUBSYSTEMS, SIMULATION_TICK_RATE_MS, getBatteryParameters } from '../constants';
+import { calculateDemandAndCharge } from './localPowerLogic';
+import { checkPowerIntegrityAndShedLoad } from './powerIntegrityService';
 
 export function updateCarState(prevState: CarState, region: Region, drivingStyle: DrivingStyle, terrain: Terrain): CarState {
     const newState = { ...prevState };
@@ -147,46 +148,123 @@ export function forceUpdateScenario(): Scenario {
     }
 }
 
+interface DegradationResult {
+    newSoH: number;
+    socDrain: number; // A negative percentage value to be applied to SoC
+}
+
+// Base degradation values per tick (1.5s)
+const BASE_SOH_DEGRADATION_PER_TICK = 0.000005; 
+const BASE_SOC_DRAIN_PER_TICK = 0.0001; 
+
+function calculateDegradation(
+    metrics: SystemMetrics,
+    config: VehicleConfig,
+    batteryParams: BatteryParameters,
+): DegradationResult {
+    let sohDegradation = BASE_SOH_DEGRADATION_PER_TICK;
+    let socDrain = BASE_SOC_DRAIN_PER_TICK;
+
+    const ahCapacity = batteryParams.capacityWh / batteryParams.nominalVoltage;
+    if (ahCapacity > 0) {
+        const cRate = Math.abs(metrics.batteryCurrent) / ahCapacity;
+        if (cRate > 2) { // High C-rate
+            sohDegradation *= 2.0;
+        } else if (cRate > 1) {
+            sohDegradation *= 1.4;
+        }
+    }
+
+    if (metrics.systemTemp > 70) {
+        sohDegradation *= 2.5;
+        socDrain *= 2;
+    } else if (metrics.systemTemp > 50) {
+        sohDegradation *= 1.5;
+    } else if (metrics.systemTemp < 5) {
+        sohDegradation *= 1.2; // Degradation at low temps
+    }
+
+    if (metrics.batteryCharge < 20) {
+        sohDegradation *= 1.8;
+    } else if (metrics.batteryCharge > 95) {
+        sohDegradation *= 1.2;
+    }
+    
+    const newSoH = Math.max(0, metrics.batterySoh - sohDegradation);
+
+    return {
+        newSoH,
+        socDrain: -socDrain,
+    };
+}
+
+
 export function updateSystemMetrics(
     prevMetrics: SystemMetrics,
     powerDistribution: PowerDistribution,
-    carState: CarState,
+    netPowerFromSource: number, // Watts. Positive for regen/alternator.
     vehicleConfig: VehicleConfig,
-    terrain: Terrain
+    scenario: Scenario,
 ): SystemMetrics {
     const newMetrics = { ...prevMetrics };
     const totalPowerDraw = Object.values(powerDistribution).reduce((sum, val) => sum + val, 0);
     newMetrics.totalPowerDraw = totalPowerDraw;
 
-    let chargeChange = 0;
-    const isRegenBraking = carState.action === CarAction.Braking || terrain === Terrain.Downhill;
-    const isCharging = (vehicleConfig.powertrain === 'EV' && isRegenBraking) ||
-        (vehicleConfig.powertrain !== 'EV' && carState.speed > 20 && terrain !== Terrain.Uphill);
+    const batteryParams = getBatteryParameters(vehicleConfig);
 
-    if (isCharging) {
-        let chargeRate = vehicleConfig.powertrain === 'EV' ? 0.5 : 0.2;
-        if (terrain === Terrain.Downhill) chargeRate *= 1.5;
-        chargeChange = chargeRate;
-    } else {
-        const dischargeRate = totalPowerDraw / (vehicleConfig.voltageSystem === '48V' ? 10000 : 5000);
-        chargeChange = -dischargeRate;
-    }
+    // 1. State of Health (SoH) - calculated first to affect other params
+    const { newSoH, socDrain } = calculateDegradation(newMetrics, vehicleConfig, batteryParams);
+    newMetrics.batterySoh = newSoH;
 
-    newMetrics.batteryCharge = Math.max(0, Math.min(100, newMetrics.batteryCharge + chargeChange));
+    // 2. Net power on the battery. Positive = charging, negative = discharging.
+    const netBatteryPower = netPowerFromSource - totalPowerDraw;
 
-    const tempChange = (totalPowerDraw / 1500) - 0.2; // Rises with load, cools over time
-    newMetrics.systemTemp = Math.max(20, Math.min(90, newMetrics.systemTemp + tempChange));
+    // 3. Estimate battery current (I = P/V). I > 0 for discharge.
+    const V_prev = newMetrics.batteryVoltage || batteryParams.nominalVoltage;
+    newMetrics.batteryCurrent = -netBatteryPower / V_prev;
+
+    // 4. Update Temperature with Joule heating and cooling
+    const tempFactor = 1 + Math.max(0, (25 - newMetrics.systemTemp) / 50); // R increases below 25C
+    const sohFactor = 1 + (100 - newMetrics.batterySoh) / 100; // R increases as SoH drops
+    const internalResistance = batteryParams.internalResistanceOhms * tempFactor * sohFactor;
+
+    const powerLossWatts = (newMetrics.batteryCurrent ** 2) * internalResistance;
+    const tempDiff = newMetrics.systemTemp - scenario.outsideTemp;
+    const coolingEffectWatts = tempDiff > 0 ? tempDiff * 5 : 0;
+    const netHeatingWatts = powerLossWatts - coolingEffectWatts;
     
-    newMetrics.availablePower = vehicleConfig.voltageSystem === '48V' ? 6000 : 3000;
-    if (newMetrics.batteryCharge < 20) {
-        newMetrics.availablePower *= newMetrics.batteryCharge / 20;
+    const thermalMass = batteryParams.massKg * batteryParams.specificHeatCapacity;
+    const tempChange = (netHeatingWatts * (SIMULATION_TICK_RATE_MS / 1000)) / thermalMass;
+    newMetrics.systemTemp = Math.max(-10, Math.min(90, newMetrics.systemTemp + tempChange));
+
+    // 5. Update battery voltage: V_batt = V_oc(SOC) - I*R
+    const voltageSag = newMetrics.batteryCurrent * internalResistance;
+    const openCircuitVoltage = batteryParams.nominalVoltage * (0.90 + (prevMetrics.batteryCharge / 666));
+    newMetrics.batteryVoltage = openCircuitVoltage - voltageSag;
+
+    // 6. Update State of Charge (SOC)
+    const energyChangeWh = netBatteryPower * (SIMULATION_TICK_RATE_MS / 1000) / 3600;
+    const effectiveCapacityWh = batteryParams.capacityWh * (newMetrics.batterySoh / 100);
+    if (effectiveCapacityWh > 0) {
+      const socChange = (energyChangeWh / effectiveCapacityWh) * 100;
+      newMetrics.batteryCharge = Math.max(0, Math.min(100, prevMetrics.batteryCharge + socChange + socDrain));
     }
+    
+    // 7. Update Available Power
+    const socPowerFactor = newMetrics.batteryCharge < 10 ? newMetrics.batteryCharge / 10 : 1;
+    const tempPowerFactor = newMetrics.systemTemp < 0 ? 0.4 : 1;
+    const sohPowerFactor = newMetrics.batterySoh / 100;
+    
+    const ahCapacity = effectiveCapacityWh / batteryParams.nominalVoltage;
+    const maxDischargeCurrent = ahCapacity > 0 ? ahCapacity * 4 : 0; // 4C max discharge
+    const maxPowerFromBattery = newMetrics.batteryVoltage * maxDischargeCurrent;
+    newMetrics.availablePower = maxPowerFromBattery * socPowerFactor * tempPowerFactor * sohPowerFactor + netPowerFromSource;
 
     return newMetrics;
 }
 
+
 export function checkForAlerts(
-    powerDistribution: PowerDistribution,
     systemMetrics: SystemMetrics,
     prevAlerts: Alert[],
 ): Alert[] {
@@ -195,11 +273,7 @@ export function checkForAlerts(
     
     const hasRecentAlert = (type: string) => prevAlerts.some(a => a.id.startsWith(type) && (now - a.timestamp) < 10000);
 
-    if (systemMetrics.totalPowerDraw > systemMetrics.availablePower) {
-         if (!hasRecentAlert('sys-critical')) {
-            alerts.push({ id: `sys-critical-${now}`, subsystem: 'system', message: `CRITICAL OVERLOAD: ${systemMetrics.totalPowerDraw.toFixed(0)}W exceeds available power!`, timestamp: now });
-        }
-    } else if (systemMetrics.totalPowerDraw > systemMetrics.availablePower * 0.9) {
+    if (systemMetrics.totalPowerDraw > systemMetrics.availablePower * 0.9 && systemMetrics.totalPowerDraw <= systemMetrics.availablePower) {
         if (!hasRecentAlert('sys-overload')) {
             alerts.push({ id: `sys-overload-${now}`, subsystem: 'system', message: `High Load: ${systemMetrics.totalPowerDraw.toFixed(0)}W draw nearing capacity.`, timestamp: now });
         }
@@ -214,6 +288,12 @@ export function checkForAlerts(
     if (systemMetrics.batteryCharge < 15) {
          if (!hasRecentAlert('sys-battery')) {
             alerts.push({ id: `sys-battery-${now}`, subsystem: 'system', message: `Low Battery: ${systemMetrics.batteryCharge.toFixed(1)}%.`, timestamp: now });
+        }
+    }
+
+    if (systemMetrics.batterySoh < 90) {
+         if (!hasRecentAlert('sys-soh')) {
+            alerts.push({ id: `sys-soh-${now}`, subsystem: 'system', message: `Battery Health Alert: SoH at ${systemMetrics.batterySoh.toFixed(1)}%. Performance degraded.`, timestamp: now });
         }
     }
 
@@ -236,7 +316,7 @@ export function runSimulationTick(
     nextScenario: Scenario;
 } {
     const nextScenario = autoScenario ? updateScenario(scenario) : scenario;
-    const nextCarState = updateCarState(carState, nextScenario.region, drivingStyle, nextScenario.terrain);
+    let nextCarState = updateCarState(carState, nextScenario.region, drivingStyle, nextScenario.terrain);
     
     // Auto-manage systems based on scenario
     nextCarState.lightsOn = nextScenario.timeOfDay !== TimeOfDay.Day || nextScenario.weather === Weather.Rainy || nextScenario.weather === Weather.Snowy;
@@ -248,15 +328,29 @@ export function runSimulationTick(
        // Only toggle sometimes to simulate user preference
        nextCarState.hvacOn = tempComfortTrigger;
     }
+    
+    // 1. Calculate raw demand and charge effect based on powertrain logic
+    const { demand, chargeEffect } = calculateDemandAndCharge(vehicleConfig, nextCarState, systemMetrics, nextScenario, SUBSYSTEMS);
+    
+    // Turn off ignition cycle after first tick
+    if (nextCarState.isIgnitionCycle) {
+        nextCarState = {...nextCarState, isIgnitionCycle: false};
+    }
 
-    const nextPowerDistribution = calculatePowerDistribution(vehicleConfig, nextCarState, systemMetrics, nextScenario, SUBSYSTEMS);
-    const nextSystemMetrics = updateSystemMetrics(systemMetrics, nextPowerDistribution, nextCarState, vehicleConfig, nextScenario.terrain);
-    const newAlerts = checkForAlerts(nextPowerDistribution, nextSystemMetrics, prevAlerts);
+    // 2. Validate against available power and shed load if necessary
+    const { finalDistribution, integrityAlerts } = checkPowerIntegrityAndShedLoad(demand, systemMetrics, SUBSYSTEMS);
+
+    // 3. Update system metrics with final, validated power distribution
+    const nextSystemMetrics = updateSystemMetrics(systemMetrics, finalDistribution, chargeEffect, vehicleConfig, nextScenario);
+    
+    // 4. Check for other system alerts
+    const systemAlerts = checkForAlerts(nextSystemMetrics, prevAlerts);
+    const newAlerts = [...integrityAlerts, ...systemAlerts];
     
     return {
         nextCarState,
         nextSystemMetrics,
-        nextPowerDistribution,
+        nextPowerDistribution: finalDistribution,
         newAlerts,
         nextScenario
     };

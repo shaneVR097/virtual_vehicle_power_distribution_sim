@@ -1,5 +1,4 @@
 import React, { useMemo } from 'react';
-// Fix: Added CartesianGrid to the recharts import.
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, CartesianGrid } from 'recharts';
 import type { SubSystemName } from '../../types';
 import { SUBSYSTEMS } from '../../constants';

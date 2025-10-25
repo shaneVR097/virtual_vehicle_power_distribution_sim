@@ -35,14 +35,14 @@ const PowerDistributionPieChart: React.FC<ChartProps> = ({ powerDistribution }) 
 
     if (totalPower < 1) {
         return (
-            <div className="glass-pane p-4 h-64 w-full flex items-center justify-center">
+            <div className="glass-pane p-4 h-48 w-full flex items-center justify-center">
                 <p className="text-text-secondary italic">No significant power draw</p>
             </div>
         )
     }
 
   return (
-    <div className="glass-pane p-4 h-64 w-full">
+    <div className="glass-pane p-4 h-48 w-full">
       <h3 className="text-md font-semibold text-text-primary mb-4">Power Distribution by Category</h3>
       <ResponsiveContainer>
         <PieChart>
@@ -51,8 +51,8 @@ const PowerDistributionPieChart: React.FC<ChartProps> = ({ powerDistribution }) 
             cx="50%"
             cy="50%"
             labelLine={false}
-            outerRadius={80}
-            innerRadius={40}
+            outerRadius={60}
+            innerRadius={30}
             fill="#8884d8"
             dataKey="value"
             nameKey="name"

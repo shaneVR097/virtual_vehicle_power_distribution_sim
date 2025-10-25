@@ -16,7 +16,7 @@ const Dashboard: React.FC<DashboardProps> = ({ metrics, history, powerDistributi
   return (
     <div className="flex flex-col gap-4">
       <h3 className="text-xl font-bold text-text-primary px-1">Dashboard</h3>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
         <PowerDistributionPieChart powerDistribution={powerDistribution} />
         <KeyComponentsChart data={history} events={patternChangeEvents} />
         <PowerHistoryChart data={history} events={patternChangeEvents} />

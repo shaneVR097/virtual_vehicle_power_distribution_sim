@@ -10,14 +10,14 @@ interface StatCardProps {
 
 const StatCard: React.FC<StatCardProps> = ({ icon, title, value, unit, colorClass }) => {
   return (
-    <div className="glass-pane p-3 flex items-center h-full pointer-events-auto">
-      <div className={`p-2.5 rounded-lg mr-3 ${colorClass}`}>
+    <div className="glass-pane p-1.5 flex items-center h-full pointer-events-auto">
+      <div className={`p-1.5 rounded-md mr-2 ${colorClass}`}>
         {icon}
       </div>
       <div className="overflow-hidden">
         <p className="text-xs text-text-secondary font-medium truncate">{title}</p>
-        <p className="text-xl font-bold text-text-primary">
-          {value} <span className="text-base font-medium text-text-secondary">{unit}</span>
+        <p className="text-base font-bold text-text-primary">
+          {value} <span className="text-sm font-medium text-text-secondary">{unit}</span>
         </p>
       </div>
     </div>

@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import ControlPanel from './components/ControlPanel';
 import CarVisualization from './components/CarVisualization';
@@ -6,7 +7,8 @@ import SetupModal from './components/SetupModal';
 import { AlertTriangleIcon, ClockIcon } from './components/Icons';
 import { SimulationState, CarAction, CarType, Powertrain, VoltageSystem, TimeOfDay, Weather, Region, CAR_SUBTYPES, DrivingStyle, RoadCondition, TrafficDensity, Terrain } from './types';
 import type { VehicleConfig, Scenario, CarState, SystemMetrics, PowerDistribution, Alert, HistoryEntry, SubSystemName, SimulationSummary, SimulationSnapshot } from './types';
-import { INITIAL_POWER_DISTRIBUTION, SIMULATION_TICK_RATE_MS, SUBSYSTEMS } from './constants';
+// FIX: Removed non-existent voltage constants and added getBatteryParameters
+import { INITIAL_POWER_DISTRIBUTION, SIMULATION_TICK_RATE_MS, SUBSYSTEMS, getBatteryParameters } from './constants';
 import { runSimulationTick, forceUpdateScenario } from './services/simulationService';
 import { generateReport } from './services/reportService';
 import PowerHistoryChart from './components/charts/PowerHistoryChart';
@@ -16,7 +18,7 @@ import PowerDrainBreakdownChart from './components/charts/PowerDrainBreakdownCha
 const AlertLog: React.FC<{alerts: Alert[]}> = ({ alerts }) => (
     <div className="flex flex-col gap-4">
         <h3 className="text-xl font-bold text-text-primary px-1 flex items-center"><AlertTriangleIcon className="w-5 h-5 mr-2 text-red-400"/>Active Alerts</h3>
-        <div className="glass-pane p-4 h-48 overflow-y-auto space-y-2">
+        <div className="glass-pane p-4 h-40 overflow-y-auto space-y-2">
              {alerts.length > 0 ? alerts.map(alert => (
                 <div key={alert.id} className="text-sm bg-red-900/50 border-l-4 border-red-500 p-2 rounded-r-md">
                     <p className="text-red-300 font-semibold">{new Date(alert.timestamp).toLocaleTimeString()}: <span className="font-normal text-red-400">{alert.message}</span></p>
@@ -158,14 +160,22 @@ const App: React.FC = () => {
         lightsOn: false,
         wipersOn: false,
         seatHeatersOn: false,
+        isIgnitionCycle: true,
     });
 
-    const getDefaultSystemMetrics = (config: VehicleConfig): SystemMetrics => ({
-        batteryCharge: 100,
-        systemTemp: 25,
-        totalPowerDraw: 0,
-        availablePower: config.voltageSystem === '48V' ? 6000 : 3000,
-    });
+    const getDefaultSystemMetrics = (config: VehicleConfig): SystemMetrics => {
+        // FIX: Use getBatteryParameters to get nominal voltage correctly.
+        const batteryParams = getBatteryParameters(config);
+        return {
+            batteryCharge: 100,
+            batterySoh: 100,
+            batteryVoltage: batteryParams.nominalVoltage,
+            batteryCurrent: 0,
+            systemTemp: 25,
+            totalPowerDraw: 0,
+            availablePower: config.voltageSystem === '48V' ? 6000 : 3000,
+        };
+    };
 
     const [vehicleConfig, setVehicleConfig] = useState<VehicleConfig>(getDefaultVehicleConfig());
     const [scenario, setScenario] = useState<Scenario>(getDefaultScenario());
@@ -267,7 +277,7 @@ const App: React.FC = () => {
         if (newAlerts.length > 0) {
             setAlerts(prev => [...newAlerts, ...prev].slice(0, 10));
             newAlerts.forEach(alert => {
-                if (alert.message.includes('OVERLOAD')) alertCountRef.current.overload++;
+                if (alert.message.includes('OVERLOAD') || alert.message.includes('breach')) alertCountRef.current.overload++;
                 if (alert.message.includes('Temperature')) alertCountRef.current.temp++;
             });
         }
@@ -359,6 +369,9 @@ const App: React.FC = () => {
     
     const handleVehicleConfigChange = <K extends keyof VehicleConfig>(key: K, value: VehicleConfig[K]) => {
       const newConfig = {...vehicleConfig, [key]: value};
+      if (key === 'carType') {
+        newConfig.subType = CAR_SUBTYPES[value as CarType][0];
+      }
       setVehicleConfig(newConfig);
       resetState(newConfig);
     }
@@ -372,7 +385,7 @@ const App: React.FC = () => {
     }
 
     return (
-        <div className="min-h-screen bg-bg-primary text-text-primary p-4 sm:p-6 lg:p-8 font-sans">
+        <div className="h-screen bg-bg-primary text-text-primary font-sans flex flex-col">
             {isGeneratingReport && (
                 <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center">
                     <div className="text-center">
@@ -389,7 +402,7 @@ const App: React.FC = () => {
                 defaultVehicleConfig={getDefaultVehicleConfig()}
                 defaultScenario={getDefaultScenario()}
             />
-            <div className="max-w-screen-2xl mx-auto">
+            <div className="flex-none px-4 sm:px-6 lg:px-8">
                 <SimulationHeader
                     virtualElapsedTime={virtualElapsedTime}
                     virtualDuration={virtualDuration}
@@ -398,8 +411,10 @@ const App: React.FC = () => {
                     wallClockElapsedTime={wallClockElapsedTime}
                     simulationState={simulationState}
                 />
-                <main className="flex flex-col lg:flex-row gap-6 h-[calc(100vh-185px)]">
-                    <div className="lg:w-2/3 h-full flex flex-col gap-4">
+            </div>
+            <main className="flex-grow min-h-0 px-4 sm:px-6 lg:px-8 pb-4 flex flex-col gap-6">
+                <div className="flex-grow min-h-0 flex flex-col lg:flex-row gap-6">
+                    <div className="lg:w-2/3 h-full">
                          <CarVisualization
                             powerDistribution={powerDistribution}
                             alerts={alerts}
@@ -408,32 +423,30 @@ const App: React.FC = () => {
                             scenario={scenario}
                          />
                     </div>
-                    <div className="lg:w-1/3 h-full flex flex-col gap-6">
-                       <div className="flex-none">
-                           <ControlPanel
-                              simulationState={simulationState}
-                              onStart={handleStartRequest}
-                              onPause={handlePause}
-                              onStop={() => handleStop(false)}
-                              vehicleConfig={vehicleConfig}
-                              onVehicleConfigChange={handleVehicleConfigChange}
-                              scenario={scenario}
-                              onScenarioChange={handleScenarioChange}
-                              onScenarioReset={handleScenarioReset}
-                              autoScenario={autoScenario}
-                              onAutoScenarioToggle={() => setAutoScenario(p => !p)}
-                              drivingStyle={drivingStyle}
-                              onDrivingStyleChange={setDrivingStyle}
-                              onForcePatternChange={handleForcePatternChange}
-                           />
-                       </div>
-                       <div className="flex-grow min-h-0 flex flex-col gap-6 overflow-y-auto pr-2">
-                           <Dashboard metrics={systemMetrics} history={history} powerDistribution={powerDistribution} patternChangeEvents={patternChangeEvents} />
-                           <AlertLog alerts={alerts} />
-                       </div>
+                    <div className="lg:w-1/3 h-full flex flex-col gap-6 overflow-y-auto pr-2">
+                       <ControlPanel
+                          simulationState={simulationState}
+                          onStart={handleStartRequest}
+                          onPause={handlePause}
+                          onStop={() => handleStop(false)}
+                          vehicleConfig={vehicleConfig}
+                          onVehicleConfigChange={handleVehicleConfigChange}
+                          scenario={scenario}
+                          onScenarioChange={handleScenarioChange}
+                          onScenarioReset={handleScenarioReset}
+                          autoScenario={autoScenario}
+                          onAutoScenarioToggle={() => setAutoScenario(p => !p)}
+                          drivingStyle={drivingStyle}
+                          onDrivingStyleChange={setDrivingStyle}
+                          onForcePatternChange={handleForcePatternChange}
+                       />
+                       <AlertLog alerts={alerts} />
                     </div>
-                </main>
-            </div>
+                </div>
+                <div className="flex-none">
+                    <Dashboard metrics={systemMetrics} history={history} powerDistribution={powerDistribution} patternChangeEvents={patternChangeEvents} />
+                </div>
+            </main>
         </div>
     );
 };
