@@ -1,0 +1,5 @@
+{
+  "name": "Intelligent Power Distribution Monitoring System",
+  "description": "A simulator for an intelligent electrical power management system in automobiles, optimizing current flow and preventing overloads. It uses AI to manage load balancing and provides real-time visualizations, charts, and safety alerts.",
+  "requestFramePermissions": []
+}
